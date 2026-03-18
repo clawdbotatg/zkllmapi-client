@@ -1,0 +1,21 @@
+{
+  "name": "zkllmapi-client",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "buy": "tsx src/index.ts buy",
+    "chat": "tsx src/index.ts chat",
+    "address": "tsx src/index.ts address"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "0.82.0",
+    "@noir-lang/noir_js": "1.0.0-beta.3",
+    "dotenv": "^16.4.5",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
