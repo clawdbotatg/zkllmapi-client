@@ -6,7 +6,8 @@ const arg = process.argv.slice(3).join(" ");
 
 if (command === "buy") {
   const { buy } = await import("./buy.js");
-  await buy();
+  const count = arg ? parseInt(arg, 10) : 1;
+  await buy(count);
 } else if (command === "chat") {
   if (!arg) {
     console.error("Usage: tsx src/index.ts chat <message>");

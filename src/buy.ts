@@ -30,29 +30,32 @@ function saveCredits(credits: Credit[]) {
   writeFileSync("credits.json", JSON.stringify(credits, null, 2));
 }
 
-export async function buy() {
+export async function buy(count = 1) {
   const account = privateKeyToAccount(getPrivateKey());
   const transport = http(getRpcUrl());
   const publicClient = createPublicClient({ chain: base, transport });
   const walletClient = createWalletClient({ chain: base, transport, account });
 
   console.log(`Wallet: ${account.address}`);
+  console.log(`Buying ${count} credit(s) in one transaction...`);
 
-  // Step 1: Generate nullifier + secret
-  const nullifier = randomField();
-  const secret = randomField();
-  console.log("Generated nullifier and secret");
-
-  // Step 2: Compute commitment via poseidon2
-  console.log("Computing commitment (poseidon2)...");
+  // Step 1: Generate nullifier + secret for each credit
   const bb = await Barretenberg.new({ threads: 1 });
-  const commitmentFr = await bb.poseidon2Hash([new Fr(nullifier), new Fr(secret)]);
-  const commitmentBigInt = BigInt("0x" + Buffer.from(commitmentFr.value).toString("hex"));
-  await bb.destroy();
-  console.log(`Commitment: ${commitmentBigInt.toString()}`);
+  const newCredits: { nullifier: bigint; secret: bigint; commitment: bigint }[] = [];
 
-  // Step 3: Quote ETH cost
-  console.log("Fetching pricing...");
+  console.log("Computing commitments (poseidon2)...");
+  for (let i = 0; i < count; i++) {
+    const nullifier = randomField();
+    const secret = randomField();
+    const commitmentFr = await bb.poseidon2Hash([new Fr(nullifier), new Fr(secret)]);
+    const commitment = BigInt("0x" + Buffer.from(commitmentFr.value).toString("hex"));
+    newCredits.push({ nullifier, secret, commitment });
+    console.log(`  [${i + 1}/${count}] commitment: ${commitment.toString().slice(0, 20)}...`);
+  }
+  await bb.destroy();
+
+  // Step 2: Quote ETH cost
+  console.log("\nFetching pricing...");
   const oracleData = await publicClient.readContract({
     address: CONTRACTS.CLAWDPricing,
     abi: PRICING_ABI,
@@ -60,23 +63,26 @@ export async function buy() {
   });
 
   const [clawdPerEth, , pricePerCreditCLAWD] = oracleData;
-  const ethNeeded = (pricePerCreditCLAWD * 125n * 10n ** 18n) / (clawdPerEth * 100n);
-  console.log(`ETH needed (with 25% buffer): ${formatEther(ethNeeded)} ETH`);
+  // ETH for all credits + 25% buffer
+  const ethNeeded = (pricePerCreditCLAWD * BigInt(count) * 125n * 10n ** 18n) / (clawdPerEth * 100n);
+  console.log(`ETH needed for ${count} credits (25% buffer): ${formatEther(ethNeeded)} ETH`);
 
   const pricePerCredit = await publicClient.readContract({
     address: CONTRACTS.APICredits,
     abi: APICREDITS_ABI,
     functionName: "pricePerCredit",
   });
-  const minCLAWDOut = (pricePerCredit * 95n) / 100n;
+  // minCLAWDOut = pricePerCredit * count with 5% slippage
+  const minCLAWDOut = (pricePerCredit * BigInt(count) * 95n) / 100n;
 
-  // Step 4: Buy
-  console.log("Sending buyWithETH transaction...");
+  // Step 3: Buy all commitments in one tx
+  const commitmentArgs = newCredits.map(c => c.commitment);
+  console.log("\nSending buyWithETH transaction...");
   const hash = await walletClient.writeContract({
     address: CONTRACTS.CLAWDRouter,
     abi: ROUTER_ABI,
     functionName: "buyWithETH",
-    args: [[commitmentBigInt], minCLAWDOut],
+    args: [commitmentArgs, minCLAWDOut],
     value: ethNeeded,
   });
   console.log(`Tx hash: ${hash}`);
@@ -85,17 +91,18 @@ export async function buy() {
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   console.log(`Confirmed in block ${receipt.blockNumber}`);
 
-  // Step 5: Save credential
+  // Step 4: Save all credentials
   const credits = loadCredits();
-  credits.push({
-    nullifier: nullifier.toString(),
-    secret: secret.toString(),
-    commitment: commitmentBigInt.toString(),
-    spent: false,
-  });
+  for (const c of newCredits) {
+    credits.push({
+      nullifier: c.nullifier.toString(),
+      secret: c.secret.toString(),
+      commitment: c.commitment.toString(),
+      spent: false,
+    });
+  }
   saveCredits(credits);
 
-  console.log("\n✅ Credit purchased and saved!");
-  console.log(`Commitment (hex): 0x${commitmentBigInt.toString(16).padStart(64, "0")}`);
-  console.log(`Commitment (dec): ${commitmentBigInt.toString()}`);
+  console.log(`\n✅ ${count} credit(s) purchased and saved!`);
+  console.log(`Basescan: https://basescan.org/tx/${hash}`);
 }
