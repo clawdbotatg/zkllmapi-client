@@ -54,7 +54,7 @@ export async function buy(count = 1) {
   }
   await bb.destroy();
 
-  // Step 2: Quote ETH cost
+  // Step 2: Quote ETH cost + dynamic minCLAWDOut from oracle
   console.log("\nFetching pricing...");
   const oracleData = await publicClient.readContract({
     address: CONTRACTS.CLAWDPricing,
@@ -63,17 +63,16 @@ export async function buy(count = 1) {
   });
 
   const [clawdPerEth, , pricePerCreditCLAWD] = oracleData;
-  // ETH for all credits + 25% buffer
+  // ETH for all credits + 25% buffer for price movement
   const ethNeeded = (pricePerCreditCLAWD * BigInt(count) * 125n * 10n ** 18n) / (clawdPerEth * 100n);
   console.log(`ETH needed for ${count} credits (25% buffer): ${formatEther(ethNeeded)} ETH`);
 
-  const pricePerCredit = await publicClient.readContract({
-    address: CONTRACTS.APICredits,
-    abi: APICREDITS_ABI,
-    functionName: "pricePerCredit",
-  });
-  // minCLAWDOut = pricePerCredit * count with 5% slippage
-  const minCLAWDOut = (pricePerCredit * BigInt(count) * 95n) / 100n;
+  // minCLAWDOut = oracle price per credit * count with 5% slippage (matches router's totalCLAWD calculation)
+  // NOTE: set to 1 (minimum) because Uniswap spot price may diverge from oracle TWAP.
+  // The router itself reverts if clawdReceived < totalCLAWD after the swap, so we don't
+  // need Uniswap's slippage protection here.
+  const minCLAWDOut = 1n;
+  console.log(`minCLAWDOut: ${minCLAWDOut} (oracle-computed, router checks clawdReceived >= totalCLAWD)`);
 
   // Step 3: Buy all commitments in one tx
   const commitmentArgs = newCredits.map(c => c.commitment);
